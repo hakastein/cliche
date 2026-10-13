@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -425,4 +426,16 @@ func TestMultipleGroupTakesSlotsOfAnAppType(t *testing.T) {
 	require.NoError(t, got.err)
 	assert.Equal(t, []any{[]any{object("word", "A", "n", int64(1)), object("word", "B", "n", int64(2))}, object()},
 		got.value)
+}
+
+func TestFlagWrittenWrongKeepsTheErrorOfPflag(t *testing.T) {
+	t.Parallel()
+	files := echoScript(`{ short: "Run", long: "Run.", flags: [{ name: "count", type: "int", usage: "n" }] }`)
+
+	got := execute(t, scripts(files), cliche.Env{}, "run", "--count", "x")
+
+	usage := requireAs[*cliche.UsageError](t, got.err)
+	var invalid *pflag.InvalidValueError
+	assert.ErrorAs(t, usage, &invalid)
+	assert.False(t, got.ran)
 }

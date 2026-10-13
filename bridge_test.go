@@ -325,3 +325,16 @@ func TestSliceOfTheAppIsAnArrayOfTheScript(t *testing.T) {
 	require.NoError(t, got.err)
 	assert.Equal(t, []any{"a", int64(1), "b"}, got.value)
 }
+
+func TestDescriptorOfAGetterOfTheAppComputesNothing(t *testing.T) {
+	t.Parallel()
+	count := 0
+	api := object("count", cliche.Getter(func(context.Context) (any, error) { count++; return int64(count), nil }))
+
+	got := bridged(t, api, `const d = Object.getOwnPropertyDescriptor(api, "count"); `+
+		`return [typeof d.get, Object.keys(api), Object.isFrozen(api)];`)
+
+	require.NoError(t, got.err)
+	assert.Equal(t, []any{"function", []any{"count"}, true}, got.value)
+	assert.Equal(t, 0, count)
+}

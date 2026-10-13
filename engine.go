@@ -55,6 +55,7 @@ type engine struct {
 	errorConstructor goja.Value
 	dateConstructor  goja.Value
 	parseJSON        goja.Callable
+	freeze           goja.Callable
 	buffer           *buffer.Buffer
 	bufferModule     *goja.Object
 	fsModule         *goja.Object
@@ -76,6 +77,7 @@ func Run(ctx context.Context, c *Command, in Input, env Env) (any, error) {
 		objectPrototype: prototypeOf(vm, "Object"), errorPrototype: prototypeOf(vm, "Error"),
 		errorConstructor: vm.Get("Error"), dateConstructor: vm.Get("Date")}
 	e.parseJSON, _ = goja.AssertFunction(vm.Get("JSON").ToObject(vm).Get("parse"))
+	e.freeze, _ = goja.AssertFunction(vm.Get("Object").ToObject(vm).Get("freeze"))
 	e.enableNode()
 	stopped := make(chan struct{})
 	defer close(stopped)

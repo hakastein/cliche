@@ -26,10 +26,16 @@ func (e *ScriptError) Error() string {
 // UsageError is a call of a script command that its declaration does not take; the script did not run.
 type UsageError struct {
 	Message string
+	// Cause is the error of pflag for a flag the call wrote wrong; nil for the arguments.
+	Cause error
 }
 
 func (e *UsageError) Error() string {
 	return e.Message
+}
+
+func (e *UsageError) Unwrap() error {
+	return e.Cause
 }
 
 // FileError is an error of fs that the script left uncaught: the Node code, the syscall and the path.

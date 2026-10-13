@@ -110,6 +110,8 @@ func (e *engine) toJS(value any) goja.Value {
 			items = append(items, e.toJS(item))
 		}
 		return e.vm.NewArray(items...)
+	case *Object:
+		return e.objectOf(v)
 	case Map:
 		object := e.vm.NewDynamicObject(&mapValue{engine: e, held: v, read: map[string]goja.Value{}})
 		e.origins[object] = v
@@ -395,4 +397,28 @@ func (e *engine) fromObject(object *goja.Object, depth int) (any, error) {
 		values = append(values, value)
 	}
 	return NewObject(keys, values), nil
+}
+
+// objectOf is an *Object of the app as a frozen object of the script: a Getter is an accessor, so that reading the
+// descriptors of the object computes nothing, and the rest are values converted once.
+func (e *engine) objectOf(o *Object) *goja.Object {
+	object := e.vm.NewObject()
+	for _, key := range o.keys {
+		value := o.values[key]
+		var err error
+		if getter, computed := value.(Getter); computed {
+			get := e.vm.ToValue(func(goja.FunctionCall) goja.Value { return e.toJS(getter) })
+			err = object.DefineAccessorProperty(key, get, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		} else {
+			err = object.DefineDataProperty(key, e.toJS(value), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		}
+		if err != nil {
+			panic(err)
+		}
+	}
+	if _, err := e.freeze(goja.Undefined(), object); err != nil {
+		panic(err)
+	}
+	e.origins[object] = o
+	return object
 }

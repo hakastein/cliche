@@ -2,6 +2,7 @@ package cliche
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,7 +12,10 @@ import (
 // broken path whose call is its error. A group is made for a word no command of root holds yet; called without a
 // subcommand it knows, it is a *UsageError. A group made only for broken paths is hidden. run runs a script command.
 func (c *Catalog) AddTo(root *cobra.Command, run func(cmd *cobra.Command, command *Command, in Input) error) {
-	for _, command := range c.Commands {
+	// A shorter path goes first, so that a command which is also a group stands before the commands under it.
+	commands := slices.Clone(c.Commands)
+	slices.SortStableFunc(commands, func(a, b *Command) int { return len(a.Path) - len(b.Path) })
+	for _, command := range commands {
 		parent := groupOf(root, command.Path[:len(command.Path)-1], false)
 		parent.AddCommand(command.Cobra(func(cmd *cobra.Command, in Input) error {
 			return run(cmd, command, in)
@@ -22,6 +26,11 @@ func (c *Catalog) AddTo(root *cobra.Command, run func(cmd *cobra.Command, comman
 			continue
 		}
 		parent := groupOf(root, broken.Path[:len(broken.Path)-1], true)
+		if slices.ContainsFunc(parent.Commands(), func(child *cobra.Command) bool {
+			return child.Name() == broken.Path[len(broken.Path)-1]
+		}) {
+			continue
+		}
 		parent.AddCommand(&cobra.Command{
 			Use: broken.Path[len(broken.Path)-1], Hidden: true, DisableFlagParsing: true,
 			RunE: func(*cobra.Command, []string) error { return broken.Err },

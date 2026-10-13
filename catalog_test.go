@@ -284,3 +284,39 @@ func TestDirNamesItsFilesByAbsolutePaths(t *testing.T) {
 	require.Len(t, catalog.Commands, 1)
 	assert.Equal(t, filepath.Join(dir, "docs", "map.js"), catalog.Commands[0].File())
 }
+
+func TestCommandThatIsAlsoAGroupRunsWhicheverRootHoldsIt(t *testing.T) {
+	t.Parallel()
+	group := cliche.FS("group", mapFS(map[string]string{"docs/map.js": declared(`return "map";`)}))
+	command := cliche.FS("command", mapFS(map[string]string{"docs.js": declared(`return "docs";`)}))
+	tests := []struct {
+		name    string
+		sources []cliche.Source
+	}{
+		{name: "the group first", sources: []cliche.Source{group, command}},
+		{name: "the command first", sources: []cliche.Source{command, group}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := cliche.Config{Sources: tc.sources}
+
+			assert.Equal(t, "docs", execute(t, config, cliche.Env{}, "docs").value)
+			assert.Equal(t, "map", execute(t, config, cliche.Env{}, "docs", "map").value)
+		})
+	}
+}
+
+func TestDeclarationKeepsWhereItWritesEachArgumentAndFlag(t *testing.T) {
+	t.Parallel()
+	source := lines(`exports.definition = { short: "Run", long: "Run it.",`,
+		`  args: [{ name: "a", type: "string", usage: "a" }],`,
+		`  flags: [{ name: "f", type: "string", usage: "f" }] };`,
+		`exports.command = () => 1;`)
+
+	commands := cliche.Merge(scripts(map[string]string{"run.js": source}).Scan()).Commands
+
+	require.Len(t, commands, 1)
+	assert.Equal(t, []int{2, 10, 3, 11}, []int{commands[0].Args[0].Line, commands[0].Args[0].Column,
+		commands[0].Flags[0].Line, commands[0].Flags[0].Column})
+}

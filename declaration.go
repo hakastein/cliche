@@ -39,29 +39,33 @@ func (c *Command) File() string {
 
 // Arg is one element of the call: a single value of Type, or a group of Slots.
 type Arg struct {
-	Name     string
-	Type     string
-	Usage    string
-	Group    []Slot
-	Optional bool
-	Multiple bool
+	// Line and Column are where the declaration writes the argument.
+	Line, Column int
+	Name         string
+	Type         string
+	Usage        string
+	Group        []Slot
+	Optional     bool
+	Multiple     bool
 }
 
 // Slot is one value of a group.
 type Slot struct {
-	Name  string
-	Type  string
-	Usage string
+	Line, Column int
+	Name         string
+	Type         string
+	Usage        string
 }
 
 // Flag is a flag of the call. Default is nil when the declaration gives none.
 type Flag struct {
-	Name     string
-	Type     string
-	Usage    string
-	Multiple bool
-	Choices  []string
-	Default  any
+	Line, Column int
+	Name         string
+	Type         string
+	Usage        string
+	Multiple     bool
+	Choices      []string
+	Default      any
 }
 
 func (a Arg) width() int {
@@ -153,6 +157,11 @@ func (r *literalReader) fail(at ast.Node, format string, args ...any) {
 	}
 	r.fault = positioned("exports.definition "+fmt.Sprintf(format, args...),
 		r.file.Position(int(at.Idx0())-r.file.Base()))
+}
+
+func (r *literalReader) place(at ast.Node) (line, column int) {
+	position := r.file.Position(int(at.Idx0()) - r.file.Base())
+	return position.Line, position.Column
 }
 
 func (r *literalReader) value(expression ast.Expression) literal {
@@ -385,6 +394,7 @@ func (r *literalReader) args(declared *object) []Arg {
 	args := make([]Arg, 0, len(items))
 	for i, held := range items {
 		arg := Arg{Name: r.name(held, at[i])}
+		arg.Line, arg.Column = r.place(at[i])
 		what := "argument " + quote(arg.Name)
 		if _, isGroup := held.values["group"]; isGroup {
 			if _, typed := held.values["type"]; typed {
@@ -411,6 +421,7 @@ func (r *literalReader) slots(declared *object, what string) []Slot {
 	var names []string
 	for i, held := range items {
 		slot := Slot{Name: r.name(held, at[i])}
+		slot.Line, slot.Column = r.place(at[i])
 		slot.Type, slot.Usage = r.kind(held, at[i], argTypes, "slot "+quote(slot.Name)+" of "+what)
 		if slices.Contains(names, slot.Name) {
 			r.fail(at[i], "names the slot %s of %s twice", quote(slot.Name), what)
@@ -426,6 +437,7 @@ func (r *literalReader) flags(declared *object) []Flag {
 	flags := make([]Flag, 0, len(items))
 	for i, held := range items {
 		flag := Flag{Name: r.name(held, at[i])}
+		flag.Line, flag.Column = r.place(at[i])
 		flag.Type, flag.Usage = r.kind(held, at[i], flagTypes, "--"+flag.Name)
 		flag.Multiple = r.flag(held, "multiple")
 		if flag.Multiple && flag.Type != typeString && flag.Type != typePair {

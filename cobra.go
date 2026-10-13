@@ -47,7 +47,7 @@ func (c *Command) Cobra(run func(cmd *cobra.Command, in Input) error) *cobra.Com
 		},
 	}
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return &UsageError{Message: err.Error()}
+		return &UsageError{Message: err.Error(), Cause: err}
 	})
 	for _, flag := range c.Flags {
 		value := &flagText{types: c.types, flag: flag}
@@ -59,6 +59,9 @@ func (c *Command) Cobra(run func(cmd *cobra.Command, in Input) error) *cobra.Com
 		}
 		if flag.Default != nil {
 			declared.DefValue = defaultText(flag.Default)
+		}
+		if flag.Type != typePath && len(flag.Choices) == 0 {
+			continue
 		}
 		directive := cobra.ShellCompDirectiveNoFileComp
 		if flag.Type == typePath {
