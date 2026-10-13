@@ -174,6 +174,16 @@ func TestScriptThatIsNoCommandIsAScriptError(t *testing.T) {
 	}
 }
 
+func TestFaultWithNoFrameOfTheScriptIsAFaultOfTheCommandScript(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{"run.js": declared(`return new Proxy({}, { ownKeys() { return [1]; } });`)}
+
+	got := execute(t, scripts(files), cliche.Env{}, "run")
+
+	failed := requireAs[*cliche.ScriptError](t, got.err)
+	assert.Equal(t, "test:run.js", failed.File)
+}
+
 func TestCancelledContextInterruptsTheScript(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

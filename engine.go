@@ -37,10 +37,12 @@ type Env struct {
 }
 
 type engine struct {
-	ctx     context.Context
-	vm      *goja.Runtime
-	env     Env
-	source  Source
+	ctx    context.Context
+	vm     *goja.Runtime
+	env    Env
+	source Source
+	// file names the command script: a fault with no frame of a script is its fault.
+	file    string
 	modules map[string]*goja.Object
 	named   map[string]goja.Value
 	// origins are the values of the app as the script holds them: they come back as the same values.
@@ -69,7 +71,7 @@ func Run(ctx context.Context, c *Command, in Input, env Env) (any, error) {
 	}
 	vm := goja.New()
 	vm.SetMaxCallStackSize(maxCallStack)
-	e := &engine{ctx: ctx, vm: vm, env: env, source: c.source, modules: map[string]*goja.Object{},
+	e := &engine{ctx: ctx, vm: vm, env: env, source: c.source, file: c.File(), modules: map[string]*goja.Object{},
 		named: map[string]goja.Value{}, origins: map[*goja.Object]any{}, thrown: map[*goja.Object]error{},
 		objectPrototype: prototypeOf(vm, "Object"), errorPrototype: prototypeOf(vm, "Error"),
 		errorConstructor: vm.Get("Error"), dateConstructor: vm.Get("Date")}
@@ -193,7 +195,7 @@ func (e *engine) errorOf(err error) error {
 		}
 		return &InterruptedError{Cause: cause}
 	case errors.As(err, &overflow):
-		at := e.placeIn(overflow.Stack())
+		at := e.faultPlace(overflow.Stack())
 		at.Message = "RangeError: Maximum call stack size exceeded"
 		return at
 	case errors.As(err, &exception):
@@ -202,7 +204,7 @@ func (e *engine) errorOf(err error) error {
 				return known
 			}
 		}
-		at := e.placeIn(exception.Stack())
+		at := e.faultPlace(exception.Stack())
 		at.Message = e.describe(exception.Value())
 		return at
 	}
@@ -224,6 +226,16 @@ func (e *engine) placeIn(stack []goja.StackFrame) *ScriptError {
 		}
 	}
 	return &ScriptError{}
+}
+
+// faultPlace is the place of an uncaught fault: one goja raises while cliche reads the returned value has no frame of
+// the script, and is a fault of the command script.
+func (e *engine) faultPlace(stack []goja.StackFrame) *ScriptError {
+	at := e.placeIn(stack)
+	if at.File == "" {
+		at.File = e.file
+	}
+	return at
 }
 
 // The wrapper keeps the lines of the module where they are; only the first line moves right by its length.
