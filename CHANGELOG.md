@@ -2,9 +2,10 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## v0.1.1 — 2026-10-13
 
 - MIT license.
+- README in English, contributing guide, changelog and a runnable package example.
 
 ## v0.1.0 — 2026-10-13
 
