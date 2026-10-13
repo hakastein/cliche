@@ -24,49 +24,17 @@ type outcome struct {
 	ran   bool
 }
 
-// app builds the cobra tree an app would: every command of the merged catalog, a hidden command per broken path.
+// app builds the cobra tree an app would: the merged catalog under a root of its own.
 func app(config cliche.Config, env cliche.Env, got *outcome) *cobra.Command {
 	root := &cobra.Command{Use: "app", SilenceErrors: true, SilenceUsage: true}
 	root.CompletionOptions.DisableDefaultCmd = true
-	catalog := cliche.Merge(config.Scan())
-	for _, command := range catalog.Commands {
-		group(root, command.Path[:len(command.Path)-1]).AddCommand(command.Cobra(
-			func(cmd *cobra.Command, in cliche.Input) error {
-				got.ran = true
-				value, err := cliche.Run(cmd.Context(), command, in, env)
-				got.value = value
-				return err
-			}))
-	}
-	for _, broken := range catalog.Broken {
-		if len(broken.Path) == 0 {
-			continue
-		}
-		group(root, broken.Path[:len(broken.Path)-1]).AddCommand(&cobra.Command{
-			Use: broken.Path[len(broken.Path)-1], Hidden: true, DisableFlagParsing: true,
-			RunE: func(*cobra.Command, []string) error { return broken.Err },
-		})
-	}
+	cliche.Merge(config.Scan()).AddTo(root, func(cmd *cobra.Command, command *cliche.Command, in cliche.Input) error {
+		got.ran = true
+		value, err := cliche.Run(cmd.Context(), command, in, env)
+		got.value = value
+		return err
+	})
 	return root
-}
-
-func group(root *cobra.Command, path []string) *cobra.Command {
-	parent := root
-	for _, word := range path {
-		found := false
-		for _, child := range parent.Commands() {
-			if child.Name() == word {
-				parent, found = child, true
-				break
-			}
-		}
-		if !found {
-			child := &cobra.Command{Use: word, Short: "Run the " + word + " commands"}
-			parent.AddCommand(child)
-			parent = child
-		}
-	}
-	return parent
 }
 
 func execute(t *testing.T, config cliche.Config, env cliche.Env, argv ...string) outcome {

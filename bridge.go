@@ -62,6 +62,9 @@ type Func func(ctx context.Context, args ...any) (any, error)
 // Getter is a property computed each time a script reads it.
 type Getter func(ctx context.Context) (any, error)
 
+// Undefined is the value a script reads as undefined: an optional argument the call did not give.
+type Undefined struct{}
+
 type placeKey struct{}
 
 type place struct {
@@ -88,6 +91,8 @@ func (e *engine) toJS(value any) goja.Value {
 	switch v := value.(type) {
 	case nil:
 		return goja.Null()
+	case Undefined:
+		return goja.Undefined()
 	case bool, string, float64:
 		return e.vm.ToValue(v)
 	case int64:

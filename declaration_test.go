@@ -377,3 +377,52 @@ func TestCompletionIsReadFromTheDeclarationWithoutRunningTheModule(t *testing.T)
 		})
 	}
 }
+
+func TestOptionalArgumentNotGivenIsUndefinedAndParsedToNilIsNull(t *testing.T) {
+	t.Parallel()
+	files := echoScript(`{ short: "Show", long: "Show.", args: [{ name: "word", type: "none", optional: true }] }`)
+	config := scripts(files)
+	config.Types = map[string]cliche.Type{"none": {Usage: "a `WORD`", Parse: func(string) (any, error) { return nil, nil }}}
+	tests := []struct {
+		name string
+		argv []string
+		want []any
+	}{
+		{name: "not given", argv: nil, want: []any{"<undefined>", object()}},
+		{name: "given and parsed to nil", argv: []string{"x"}, want: []any{nil, object()}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := execute(t, config, cliche.Env{}, append([]string{"run"}, tc.argv...)...)
+
+			require.NoError(t, got.err)
+			assert.Equal(t, tc.want, got.value)
+		})
+	}
+}
+
+func TestGroupWithoutAKnownSubcommandIsAUsageError(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{"docs/map.js": declared(`return 1;`)}
+	for _, argv := range [][]string{{"docs"}, {"docs", "nope"}} {
+		got := execute(t, scripts(files), cliche.Env{}, argv...)
+
+		requireAs[*cliche.UsageError](t, got.err)
+		assert.False(t, got.ran)
+	}
+}
+
+func TestMultipleGroupTakesSlotsOfAnAppType(t *testing.T) {
+	t.Parallel()
+	files := echoScript(`{ short: "Def", long: "Def.", args: [{ name: "questions", usage: "q", multiple: true, ` +
+		`group: [{ name: "word", type: "upper" }, { name: "n", type: "int", usage: "n" }] }] }`)
+	config := scripts(files)
+	config.Types = map[string]cliche.Type{"upper": upper}
+
+	got := execute(t, config, cliche.Env{}, "run", "a", "1", "b", "2")
+
+	require.NoError(t, got.err)
+	assert.Equal(t, []any{[]any{object("word", "A", "n", int64(1)), object("word", "B", "n", int64(2))}, object()},
+		got.value)
+}

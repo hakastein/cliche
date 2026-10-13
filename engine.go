@@ -15,7 +15,7 @@ import (
 	"github.com/dop251/goja_nodejs/buffer"
 )
 
-// Node is the part of the Node subset an app gives scripts beyond Buffer, which they always have.
+// Node is the part of the Node subset an app gives scripts. Bytes cross the bridge as a Buffer whatever it holds.
 type Node uint8
 
 const (
@@ -23,6 +23,8 @@ const (
 	NodeFS Node = 1 << iota
 	// NodeFetch is the global fetch: synchronous, GET only.
 	NodeFetch
+	// NodeBuffer is the global Buffer and require("buffer").
+	NodeBuffer
 )
 
 // Env is what a run gives a script.
@@ -84,12 +86,6 @@ func Run(ctx context.Context, c *Command, in Input, env Env) (any, error) {
 	}()
 	var answer any
 	err := e.catch(func() { answer = e.answer(c, in) })
-	if err != nil && ctx.Err() != nil {
-		var interrupted *InterruptedError
-		if !errors.As(err, &interrupted) {
-			err = &InterruptedError{Cause: context.Cause(ctx)}
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -112,11 +108,15 @@ func (e *engine) enableNode() {
 		return isObject && object.ExportType() == reflect.TypeOf([]byte(nil)) && e.vm.InstanceOf(object, constructor)
 	}
 	e.set(constructor, "isBuffer", isBuffer)
+	// GetApi finds Buffer as a global, so the global stands while it is taken and goes when the app gives none.
 	e.set(e.vm.GlobalObject(), "Buffer", constructor)
+	e.buffer = buffer.GetApi(e.vm)
+	if e.env.Node&NodeBuffer == 0 {
+		e.vm.GlobalObject().Delete("Buffer")
+	}
 	if e.env.Node&NodeFetch != 0 {
 		e.set(e.vm.GlobalObject(), "fetch", e.fetch)
 	}
-	e.buffer = buffer.GetApi(e.vm)
 }
 
 func (e *engine) set(object *goja.Object, key string, value any) {
@@ -155,10 +155,6 @@ func (e *engine) answer(c *Command, in Input) any {
 func (e *engine) arguments(in Input) []goja.Value {
 	values := make([]goja.Value, 0, len(in.Args)+1)
 	for _, arg := range in.Args {
-		if arg == nil {
-			values = append(values, goja.Undefined())
-			continue
-		}
 		values = append(values, e.toJS(arg))
 	}
 	flags := in.Flags
@@ -312,7 +308,7 @@ func (e *engine) require(from string) func(goja.FunctionCall) goja.Value {
 				e.fsModule = e.nodeFS()
 			}
 			return e.fsModule
-		case wanted == "buffer", wanted == "node:buffer":
+		case (wanted == "buffer" || wanted == "node:buffer") && e.env.Node&NodeBuffer != 0:
 			return e.bufferModule
 		case strings.HasPrefix(wanted, "./"), strings.HasPrefix(wanted, "../"):
 			return e.load(e.library(from, wanted))

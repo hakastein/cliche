@@ -40,8 +40,9 @@ func TestNodeSubsetIsOnlyWhatTheAppGives(t *testing.T) {
 		node cliche.Node
 		want any
 	}{
-		{name: "nothing but Buffer by default", node: 0, want: []any{"undefined", "function"}},
-		{name: "fetch", node: cliche.NodeFetch, want: []any{"function", "function"}},
+		{name: "nothing by default", node: 0, want: []any{"undefined", "undefined"}},
+		{name: "Buffer", node: cliche.NodeBuffer, want: []any{"undefined", "function"}},
+		{name: "fetch", node: cliche.NodeFetch, want: []any{"function", "undefined"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,7 +80,7 @@ func TestScriptReadsAndWritesFilesWithFs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := execute(t, scripts(fsScript(tc.body)), cliche.Env{Node: cliche.NodeFS}, "run", t.TempDir())
+			got := execute(t, scripts(fsScript(tc.body)), cliche.Env{Node: cliche.NodeFS | cliche.NodeBuffer}, "run", t.TempDir())
 
 			require.NoError(t, got.err)
 			assert.Equal(t, tc.want, got.value)

@@ -103,13 +103,10 @@ func TestMergeKeepsThePathOfTheEarlierRoot(t *testing.T) {
 				Kept: "first:docs/map.js"}},
 		},
 		{
-			name:     "a path that starts another",
+			name:     "a path that starts another is no conflict",
 			second:   map[string]string{"docs.js": command, "run/fast.js": command},
-			commands: []string{"first:docs/map.js", "first:run.js"},
-			warnings: []cliche.Warning{
-				{Path: []string{"docs"}, File: "second:docs.js", Kept: "first:docs/map.js"},
-				{Path: []string{"run", "fast"}, File: "second:run/fast.js", Kept: "first:run.js"},
-			},
+			commands: []string{"first:docs/map.js", "first:run.js", "second:docs.js", "second:run/fast.js"},
+			warnings: nil,
 		},
 		{
 			name:     "no conflict",

@@ -13,7 +13,7 @@ import (
 // Input is a parsed call of a script command: the arguments in their declared order and the flags.
 type Input struct {
 	// Args holds a value per declared argument: a single one is its value, a group a *Object of its slots, a multiple
-	// one a []any; an optional one not given is nil and reaches command as undefined.
+	// one a []any; an optional one not given is Undefined.
 	Args []any
 	// Flags holds the flags given and the ones with a default.
 	Flags *Object
@@ -197,7 +197,7 @@ func (c *Command) input(args []string, values []*flagText) (Input, error) {
 		}
 		switch {
 		case len(items) == 0:
-			in.Args = append(in.Args, nil)
+			in.Args = append(in.Args, Undefined{})
 		case arg.Multiple:
 			in.Args = append(in.Args, items)
 		default:

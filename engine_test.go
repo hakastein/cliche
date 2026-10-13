@@ -71,7 +71,7 @@ func TestRequireTakesLibraryModulesOfItsOwnSource(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			env := cliche.Env{Modules: map[string]any{"api": object("name", "api")}}
+			env := cliche.Env{Modules: map[string]any{"api": object("name", "api")}, Node: cliche.NodeBuffer}
 
 			got := execute(t, scripts(tc.files), env, tc.argv...)
 

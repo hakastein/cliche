@@ -16,7 +16,7 @@ func bridged(t *testing.T, api any, body string) outcome {
 	t.Helper()
 	files := map[string]string{"run.js": lines(`const api = require("api");`,
 		`exports.definition = { short: "Run", long: "Run it." };`, `exports.command = () => { `+body+` };`)}
-	return execute(t, scripts(files), cliche.Env{Modules: map[string]any{"api": api}}, "run")
+	return execute(t, scripts(files), cliche.Env{Modules: map[string]any{"api": api}, Node: cliche.NodeBuffer}, "run")
 }
 
 func document() *record {

@@ -235,8 +235,8 @@ func sortedWords(entries map[string]*entry) []string {
 	return words
 }
 
-// Merge is the default rule of conflicts: of two paths that are equal, or one of which starts the other, the one of
-// the earlier root is kept and the later one is a warning. A root that cannot be read is a broken path.
+// Merge is the default rule of conflicts: of two equal command paths the one of the earlier root is kept and the later
+// one is a warning. A root that cannot be read is a broken path.
 func Merge(roots []Root) *Catalog {
 	catalog := &Catalog{}
 	type held struct {
@@ -246,8 +246,7 @@ func Merge(roots []Root) *Catalog {
 	var kept []held
 	clash := func(at []string, file string) bool {
 		for _, earlier := range kept {
-			shorter := min(len(earlier.path), len(at))
-			if !slices.Equal(earlier.path[:shorter], at[:shorter]) {
+			if !slices.Equal(earlier.path, at) {
 				continue
 			}
 			catalog.Warnings = append(catalog.Warnings, Warning{Path: at, File: file, Kept: earlier.file,
