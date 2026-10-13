@@ -364,13 +364,17 @@ func number(value float64) any {
 
 func (e *engine) fromArray(object *goja.Object, depth int) (any, error) {
 	length := object.Get("length").ToInteger()
-	items := make([]any, 0, length)
+	// The length is the script's own and may stand for no items at all, so it reserves nothing.
+	var items []any
 	for i := range length {
 		item, err := e.fromJS(object.Get(strconv.FormatInt(i, 10)), depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("at [%d] %w", i, err)
 		}
 		items = append(items, item)
+	}
+	if items == nil {
+		items = []any{}
 	}
 	return items, nil
 }

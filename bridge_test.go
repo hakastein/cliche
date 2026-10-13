@@ -220,6 +220,7 @@ func TestValueTheBridgeDoesNotCarryIsRefused(t *testing.T) {
 		{name: "an object of a class", body: `return new (class A {})();`},
 		{name: "a Map of JS", body: `return new Map();`},
 		{name: "a value that holds itself", body: `const a = []; a.push(a); return a;`},
+		{name: "a length past its items", body: `const a = []; a.length = 4294967295; return a;`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
