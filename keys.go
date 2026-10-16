@@ -80,7 +80,7 @@ func (r *literalReader) appKeys(declared *object, at ast.Node) map[string]any {
 		node, given := declared.nodes[name]
 		if !given {
 			if key.Required {
-				r.fail(at, "has no %s", name)
+				r.fail(at, "has no %s", quote(name))
 				return nil
 			}
 			continue
@@ -100,14 +100,15 @@ func (r *literalReader) appKeys(declared *object, at ast.Node) map[string]any {
 	return read
 }
 
+// refuse is the fault of a value Key.Read refused: at the literal an error of Literal.Errorf names, else at the value
+// of the key.
 func (r *literalReader) refuse(name string, at ast.Node, err error) {
+	place := r.position(at)
 	var placed *literalError
-	if !errors.As(err, &placed) {
-		r.fail(at, "gives %s a value the app does not take: %v", name, err)
-		return
+	if errors.As(err, &placed) {
+		place.Line, place.Column = placed.line, placed.column
 	}
-	r.fault = &ScriptError{Message: fmt.Sprintf("exports.definition gives %s a value the app does not take: %v", name,
-		err), File: r.file.Name(), Line: placed.line, Column: placed.column}
+	r.failAt(place, "gives %s a value the app does not take: %v", quote(name), err)
 }
 
 // view gives the app a literal of the declaration with the places of its values.

@@ -3,8 +3,11 @@ package cliche_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -79,23 +82,68 @@ func scannedKeys(t *testing.T, config cliche.Config) map[string]any {
 	return catalog.Commands[0].Keys
 }
 
-// printed is a call and what it printed.
-type printed struct {
+// keyedCall is what the cobra tree of an app of collectors gives of one call: the value of the key the app held when
+// it made the run, and the call.
+type keyedCall struct {
+	held any
 	outcome
-	out string
 }
 
-func executePrinted(t *testing.T, config cliche.Config, argv ...string) printed {
+// executeKeyed builds the tree as an app of collectors would: the run it makes gives the script an API module made of
+// the key of the command, so the script sees the key only when the app held it before the call.
+func executeKeyed(t *testing.T, config cliche.Config, argv ...string) keyedCall {
 	t.Helper()
-	var got printed
-	root := app(config, cliche.Env{}, &got.outcome)
-	out := new(bytes.Buffer)
+	var got keyedCall
+	root := &cobra.Command{Use: "app", SilenceErrors: true, SilenceUsage: true}
+	root.CompletionOptions.DisableDefaultCmd = true
+	cliche.Merge(config.Scan()).AddTo(root, func(cmd *cobra.Command, command *cliche.Command, in cliche.Input) error {
+		got.held = command.Keys["collector"]
+		read, _ := got.held.(collector)
+		env := cliche.Env{Modules: map[string]any{"collector": object("scope", read.scope)}}
+		got.ran = true
+		value, err := cliche.Run(cmd.Context(), command, in, env)
+		got.value = value
+		return err
+	})
 	root.SetArgs(argv)
-	root.SetOut(out)
+	root.SetOut(new(bytes.Buffer))
 	root.SetErr(new(bytes.Buffer))
 	got.err = root.Execute()
-	got.out = out.String()
 	return got
+}
+
+// shapedFlag is a flag of a cobra command as the help and the parse take it.
+type shapedFlag struct {
+	name, shorthand, kind, usage, defaultText, bare string
+}
+
+// built is what the cobra tree of an app makes of the command run, and the call: the values the help is made of, the
+// flags, and the call with the type of its error.
+type built struct {
+	use, short, long string
+	flags            []shapedFlag
+	value            any
+	ran              bool
+	refusal          string
+}
+
+func executeBuilt(t *testing.T, config cliche.Config, argv ...string) built {
+	t.Helper()
+	var got outcome
+	root := app(config, cliche.Env{}, &got)
+	root.SetArgs(argv)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	err := root.Execute()
+	cmd, _, found := root.Find([]string{"run"})
+	require.NoError(t, found)
+	shape := built{use: cmd.Use, short: cmd.Short, long: cmd.Long, flags: []shapedFlag{}, value: got.value,
+		ran: got.ran, refusal: fmt.Sprintf("%T", err)}
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		shape.flags = append(shape.flags, shapedFlag{name: flag.Name, shorthand: flag.Shorthand,
+			kind: flag.Value.Type(), usage: flag.Usage, defaultText: flag.DefValue, bare: flag.NoOptDefVal})
+	})
+	return shape
 }
 
 func TestAppReadsItsOwnKeysWithoutRunningTheModule(t *testing.T) {
@@ -160,11 +208,11 @@ func TestDeclarationIsUnreadableAtThePlaceOfAKeyRefused(t *testing.T) {
 		config       cliche.Config
 		line, column int
 	}{
-		{name: "a key of the other app", config: withKeys(keyed(`  owner: "backend",`), collectorKeys),
+		{name: "an unregistered key", config: withKeys(keyed(`  owner: "backend",`), collectorKeys),
 			line: 2, column: 22},
-		{name: "a key of the one app", config: withKeys(keyed(`  owner: "backend",`,
+		{name: "an unregistered key beside a registered one", config: withKeys(keyed(`  owner: "backend",`,
 			`  collector: { scope: "s", facts: [] },`), ownerKeys), line: 2, column: 22},
-		{name: "a key of neither app", config: withKeys(keyed(`  collector: { scope: "s", facts: [] },`,
+		{name: "an unregistered key spelt like a registered one", config: withKeys(keyed(`  collector: { scope: "s", facts: [] },`,
 			`  colector: 1,`), collectorKeys), line: 2, column: 22},
 		{name: "a required key not given", config: withKeys(keyed(), collectorKeys), line: 2, column: 22},
 		{name: "a value refused by a plain error", config: withKeys(keyed(`  collector: "routes",`), collectorKeys),
@@ -216,11 +264,41 @@ func TestKeyOfTheAppLeavesTheCallTheHelpAndTheArgumentsAsTheyAre(t *testing.T) {
 		{name: "a call", argv: []string{"run", "a", "--mode", "slow"}},
 		{name: "the help", argv: []string{"run", "--help"}},
 		{name: "a call the declaration does not take", argv: []string{"run", "a", "b"}},
+		{name: "a flag the declaration does not take", argv: []string{"run", "a", "--collector", "x"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, executePrinted(t, plain, tc.argv...), executePrinted(t, extended, tc.argv...))
+			assert.Equal(t, executeBuilt(t, plain, tc.argv...), executeBuilt(t, extended, tc.argv...))
+		})
+	}
+}
+
+func TestAppGetsTheValueOfItsKeyBeforeTheCallAndTheScriptItsCall(t *testing.T) {
+	t.Parallel()
+	config := withKeys(map[string]string{"run.js": lines(`exports.definition = { short: "Collect", `+
+		`long: "Collect routes.", args: [{ name: "word", type: "string", usage: "a word" }], `+
+		`flags: [{ name: "mode", type: "string", usage: "a mode", choices: ["fast", "slow"], default: "fast" }], `+
+		`collector: { scope: "snapshot", facts: ["php.symbols"] } };`,
+		`exports.command = (word, flags) => [require("collector").scope, word, flags];`)}, collectorKeys)
+	held := collector{scope: "snapshot", facts: []string{"php.symbols"}}
+	tests := []struct {
+		name string
+		argv []string
+		want []any
+	}{
+		{name: "a flag given", argv: []string{"run", "a", "--mode", "slow"}, want: []any{"snapshot", "a",
+			object("mode", "slow")}},
+		{name: "a flag by its default", argv: []string{"run", "b"}, want: []any{"snapshot", "b",
+			object("mode", "fast")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := executeKeyed(t, config, tc.argv...)
+
+			require.NoError(t, got.err)
+			assert.Equal(t, keyedCall{held: held, outcome: outcome{value: tc.want, ran: true}}, got)
 		})
 	}
 }

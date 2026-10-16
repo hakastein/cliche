@@ -156,15 +156,23 @@ type literalReader struct {
 }
 
 func (r *literalReader) fail(at ast.Node, format string, args ...any) {
+	r.failAt(r.position(at), format, args...)
+}
+
+// failAt is the fault of the declaration at a place of the file.
+func (r *literalReader) failAt(at file.Position, format string, args ...any) {
 	if r.fault != nil {
 		return
 	}
-	r.fault = positioned("exports.definition "+fmt.Sprintf(format, args...),
-		r.file.Position(int(at.Idx0())-r.file.Base()))
+	r.fault = positioned("exports.definition "+fmt.Sprintf(format, args...), at)
+}
+
+func (r *literalReader) position(at ast.Node) file.Position {
+	return r.file.Position(int(at.Idx0()) - r.file.Base())
 }
 
 func (r *literalReader) place(at ast.Node) (line, column int) {
-	position := r.file.Position(int(at.Idx0()) - r.file.Base())
+	position := r.position(at)
 	return position.Line, position.Column
 }
 
