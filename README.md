@@ -81,7 +81,9 @@ The same program with an in-memory source runs as the package [example](example_
 - **Declaration.** `exports.definition` is a plain literal read without running the module: `short`, `long`, `args`,
   `flags`. Arguments may be optional, multiple or groups of slots; flags may be multiple, have `choices` and a
   `default`. Base types are `string`, `path`, `int`, `bool`, `pair` (`Name=value`) and `duration`; the app adds its own
-  through `Config.Types`.
+  through `Config.Types`. The app also registers keys of its own beside `short`, `long`, `args` and `flags` through
+  `Config.Keys`: it checks their literal values itself and reads the result from `Command.Keys` after `Scan`. Any
+  other key makes the declaration unreadable.
 - **Call.** `exports.command` gets the arguments in declared order and the flags object last. A call the declaration
   does not take fails with `*UsageError` before the script runs.
 - **Runtime.** CommonJS in strict mode, synchronous, a fresh runtime per run; cancelling the context stops the script.

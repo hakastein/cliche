@@ -20,6 +20,9 @@ type Command struct {
 	Long  string
 	Args  []Arg
 	Flags []Flag
+	// Keys holds what Key.Read gave for each key of Config.Keys the declaration writes; nil when Config.Keys is
+	// empty.
+	Keys map[string]any
 
 	source Source
 	// name is the path of the file inside its source.
@@ -86,7 +89,7 @@ func positioned(message string, at file.Position) *ScriptError {
 
 // declaration reads exports.definition of a module; a module without one is a library module, and nil, nil stands
 // for it.
-func declaration(name, source string, types map[string]Type) (*Command, *ScriptError) {
+func declaration(name, source string, types map[string]Type, keys map[string]Key) (*Command, *ScriptError) {
 	if strings.HasPrefix(source, "#!") {
 		source = "//" + source[2:]
 	}
@@ -102,7 +105,7 @@ func declaration(name, source string, types map[string]Type) (*Command, *ScriptE
 	if literal == nil {
 		return nil, nil
 	}
-	r := &literalReader{file: program.File, types: types}
+	r := &literalReader{file: program.File, types: types, keys: keys}
 	value := r.value(literal)
 	if r.fault != nil {
 		return nil, r.fault
@@ -148,6 +151,7 @@ type object struct {
 type literalReader struct {
 	file  *file.File
 	types map[string]Type
+	keys  map[string]Key
 	fault *ScriptError
 }
 
@@ -262,7 +266,7 @@ func (r *literalReader) command(value literal, at ast.Expression) *Command {
 		r.fail(at, "is no object")
 		return nil
 	}
-	r.onlyKeys(declared, at, "short", "long", "args", "flags")
+	r.onlyKeys(declared, at, append(slices.Clone(builtinKeys), sortedKeys(r.keys)...)...)
 	command := &Command{}
 	command.Short = r.text(declared, "short", at)
 	if short := command.Short; r.fault == nil && (short == "" || strings.ContainsAny(short, "\r\n") ||
@@ -295,6 +299,7 @@ func (r *literalReader) command(value literal, at ast.Expression) *Command {
 			}
 		}
 	}
+	command.Keys = r.appKeys(declared, at)
 	return command
 }
 
