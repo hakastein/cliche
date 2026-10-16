@@ -19,6 +19,8 @@ type Config struct {
 	Sources []Source
 	// Types are the types of the app beyond the base ones.
 	Types map[string]Type
+	// Keys are the keys of the app in exports.definition beside short, long, args and flags, by name.
+	Keys map[string]Key
 }
 
 // Root is a source read as a catalog: its first words with their commands and broken paths.
@@ -70,8 +72,9 @@ const wordRule = "lowercase letters, digits, - and _, starting with a letter or 
 // A symlink that leads back up would otherwise be followed forever.
 const deepestPath = 8
 
-// Scan reads every root in order: Builtin first, then Sources.
+// Scan reads every root in order: Builtin first, then Sources. It panics when Keys holds short, long, args or flags.
 func (c Config) Scan() []Root {
+	checkKeys(c.Keys)
 	var sources []Source
 	if c.Builtin != nil {
 		sources = append(sources, builtinSource(c.Builtin))
@@ -94,7 +97,7 @@ func (c Config) scan(source Source) Root {
 		root.Err = unreadableRoot(source, source.err)
 		return root
 	}
-	s := &scanner{source: source, types: c.Types}
+	s := &scanner{source: source, types: c.Types, keys: c.Keys}
 	found, err := s.dir(".", nil)
 	if err != nil {
 		root.Err = unreadableRoot(source, err)
@@ -117,6 +120,7 @@ func unreadableRoot(source Source, err error) *ScriptError {
 type scanner struct {
 	source Source
 	types  map[string]Type
+	keys   map[string]Key
 }
 
 // entry is everything a source holds at one path and below it.
@@ -215,7 +219,7 @@ func (s *scanner) file(name string, words []string) *entry {
 	if err != nil {
 		return brokenEntry(words, file, fmt.Sprintf("%s cannot be read: %v", quote(file), unwrapPath(err)))
 	}
-	command, failed := declaration(file, string(source), s.types)
+	command, failed := declaration(file, string(source), s.types, s.keys)
 	switch {
 	case failed != nil:
 		return &entry{file: file, broken: []Broken{{Path: words, Err: failed}}}
