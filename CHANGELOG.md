@@ -2,12 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## v0.2.0 — Unreleased
+## v0.2.0 — 2026-10-16
 
 - App keys of a declaration: `Config.Keys` registers keys beside `short`, `long`, `args` and `flags`, each with its
   own `Key.Read` and requiredness; the value is read as a pure literal without running the module and lands in
   `Command.Keys` after `Scan`. `Literal` and `LiteralObject` carry the place of every value, and
   `Literal.Errorf` makes a refusal a `*ScriptError` at that place. A key of cliche in `Config.Keys` panics in `Scan`.
+- A refusal of an app key, a missing required one or a value `Key.Read` refuses, names the key in backquotes, as
+  every refusal of a declaration does.
 
 ## v0.1.1 — 2026-10-13
 
