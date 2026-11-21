@@ -2,6 +2,16 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## v0.3.0 — 2026-11-21
+
+- Promises in scripts: `async`/`await` and `Promise.all`. A command may return a promise; `Run` runs the loop until it
+  settles and returns its value, and a rejected one is an error of the command, as an uncaught exception is.
+- `Async`: a function of the API module that runs in a goroutine of its own and gives the script a promise of its
+  value; two calls run in parallel. `*Promise`: a promise the app settles from any goroutine with `Settle`.
+- Cancelling the context stops the loop with `*InterruptedError`; `Run` cancels work the command did not wait for and
+  returns after every `Async` goroutine has ended. `Run` waits for a pending `*Promise` the script holds as for an
+  `Async` call; a command promise nothing is left to settle is a `*ScriptError`.
+
 ## v0.2.0 — 2026-10-16
 
 - App keys of a declaration: `Config.Keys` registers keys beside `short`, `long`, `args` and `flags`, each with its

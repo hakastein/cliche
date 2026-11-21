@@ -8,6 +8,7 @@ import (
 	"path"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja/file"
@@ -59,23 +60,44 @@ type engine struct {
 	buffer           *buffer.Buffer
 	bufferModule     *goja.Object
 	fsModule         *goja.Object
+	// pending counts what the loop waits for: the calls of Async and the subscriptions to a *Promise it has not settled;
+	// it is read and written on the loop only.
+	pending int
+	// forget drops the subscriptions to a *Promise when the run ends: a pending one would hold the runtime.
+	forget []func()
+	// work is the goroutines of the calls of Async: Run returns after they end.
+	work sync.WaitGroup
+	// queue is what goroutines settled, for the loop to run in order; wake tells the loop that there is some.
+	mu    sync.Mutex
+	queue []func()
+	wake  chan struct{}
 }
 
 // goja sets no limit of its own, and a runaway recursion would take the memory of the process.
 const maxCallStack = 10000
 
-// Run runs the script of c with the call in and returns what its command returned. An error of the app the script
-// left uncaught is that error; a fault of cliche is one of its error types.
+// Run runs the script of c with the call in and returns what its command returned; for a promise, Run runs the loop
+// until it settles. An error of the app the script left uncaught is that error; a fault of cliche is one of its error
+// types.
 func Run(ctx context.Context, c *Command, in Input, env Env) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &InterruptedError{Cause: context.Cause(ctx)}
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	vm := goja.New()
 	vm.SetMaxCallStackSize(maxCallStack)
 	e := &engine{ctx: ctx, vm: vm, env: env, source: c.source, file: c.File(), modules: map[string]*goja.Object{},
 		named: map[string]goja.Value{}, origins: map[*goja.Object]any{}, thrown: map[*goja.Object]error{},
 		objectPrototype: prototypeOf(vm, "Object"), errorPrototype: prototypeOf(vm, "Error"),
-		errorConstructor: vm.Get("Error"), dateConstructor: vm.Get("Date")}
+		errorConstructor: vm.Get("Error"), dateConstructor: vm.Get("Date"), wake: make(chan struct{}, 1)}
+	// Work of Async the command did not wait for is cancelled when it returns, and the run ends with that work.
+	defer e.work.Wait()
+	defer cancel()
+	defer func() {
+		for _, forget := range e.forget {
+			forget()
+		}
+	}()
 	e.parseJSON, _ = goja.AssertFunction(vm.Get("JSON").ToObject(vm).Get("parse"))
 	e.freeze, _ = goja.AssertFunction(vm.Get("Object").ToObject(vm).Get("freeze"))
 	e.enableNode()
@@ -149,11 +171,58 @@ func (e *engine) answer(c *Command, in Input) any {
 	if err != nil {
 		panic(err)
 	}
+	if object, isObject := returned.(*goja.Object); isObject && object.ExportType() == promiseType {
+		returned = e.await(object.Export().(*goja.Promise))
+	}
 	answer, err := e.fromJS(returned, 0)
 	if err != nil {
 		panic(e.raise(&ScriptError{Message: "the value exports.command returned " + err.Error(), File: c.File()}))
 	}
 	return answer
+}
+
+var promiseType = reflect.TypeOf((*goja.Promise)(nil))
+
+// await runs the loop until promise settles: what goroutines settled, in order, each followed by the promise jobs of
+// goja. A promise that no call of Async and no *Promise is left to settle never settles, which is a fault of the command
+// script; a rejected one is thrown as the command threw it.
+func (e *engine) await(promise *goja.Promise) goja.Value {
+	for promise.State() == goja.PromiseStatePending {
+		e.mu.Lock()
+		jobs := e.queue
+		e.queue = nil
+		e.mu.Unlock()
+		for _, job := range jobs {
+			job()
+		}
+		if len(jobs) > 0 {
+			continue
+		}
+		if e.pending == 0 {
+			panic(e.raise(&ScriptError{Message: "the promise exports.command returned never settles: no call of an " +
+				"async function and no promise of the app is left to settle it", File: e.file}))
+		}
+		select {
+		case <-e.wake:
+		case <-e.ctx.Done():
+			panic(&InterruptedError{Cause: context.Cause(e.ctx)})
+		}
+	}
+	if promise.State() == goja.PromiseStateRejected {
+		panic(promise.Result())
+	}
+	return promise.Result()
+}
+
+// post queues job for the loop and never blocks: a goroutine that settles after the run has ended leaves it to no one.
+func (e *engine) post(job func()) {
+	e.mu.Lock()
+	e.queue = append(e.queue, job)
+	e.mu.Unlock()
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (e *engine) arguments(in Input) []goja.Value {
@@ -189,7 +258,10 @@ func (e *engine) errorOf(err error) error {
 	var interrupted *goja.InterruptedError
 	var overflow *goja.StackOverflowError
 	var exception *goja.Exception
+	var stopped *InterruptedError
 	switch {
+	case errors.As(err, &stopped):
+		return stopped
 	case errors.As(err, &interrupted):
 		cause := context.Cause(e.ctx)
 		if cause == nil {

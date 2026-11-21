@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/dop251/goja"
 )
@@ -58,6 +59,55 @@ func (o *Object) Get(key string) (any, bool) {
 
 // Func is a function of the app's API. ctx is the context of Run and carries Place.
 type Func func(ctx context.Context, args ...any) (any, error)
+
+// Async is a function of the app's API that runs in a goroutine of its own: the script gets a promise of what it
+// returns, carried by the bridge as for a Func. ctx is the context of Run and carries Place; Run cancels it when it
+// returns and waits for the function, so the function ends once ctx is done.
+type Async func(ctx context.Context, args ...any) (any, error)
+
+// Promise is a promise the app settles from any goroutine: a value of the bridge a script awaits. The zero value is
+// pending, and the first Settle counts, as in JavaScript. While the command waits, Run waits for a pending Promise the
+// script holds as for an Async, until ctx is done.
+type Promise struct {
+	mu      sync.Mutex
+	settled bool
+	value   any
+	err     error
+	waiting []*func(value any, err error)
+}
+
+// Settle fulfils p with value, or rejects it with err when err is not nil.
+func (p *Promise) Settle(value any, err error) {
+	p.mu.Lock()
+	if p.settled {
+		p.mu.Unlock()
+		return
+	}
+	p.settled, p.value, p.err = true, value, err
+	waiting := p.waiting
+	p.waiting = nil
+	p.mu.Unlock()
+	for _, settle := range waiting {
+		(*settle)(value, err)
+	}
+}
+
+// then calls settle once p is settled: at once when it is. forget drops settle if p is not settled yet.
+func (p *Promise) then(settle func(value any, err error)) (forget func()) {
+	p.mu.Lock()
+	if !p.settled {
+		p.waiting = append(p.waiting, &settle)
+		p.mu.Unlock()
+		return func() {
+			p.mu.Lock()
+			p.waiting = slices.DeleteFunc(p.waiting, func(waiting *func(any, error)) bool { return waiting == &settle })
+			p.mu.Unlock()
+		}
+	}
+	p.mu.Unlock()
+	settle(p.value, p.err)
+	return func() {}
+}
 
 // Getter is a property computed each time a script reads it.
 type Getter func(ctx context.Context) (any, error)
@@ -124,6 +174,22 @@ func (e *engine) toJS(value any) goja.Value {
 		object := e.vm.ToValue(e.function(v)).(*goja.Object)
 		e.origins[object] = v
 		return object
+	case Async:
+		object := e.vm.ToValue(e.async(v)).(*goja.Object)
+		e.origins[object] = v
+		return object
+	case *Promise:
+		promise, resolve, reject := e.vm.NewPromise()
+		e.pending++
+		e.forget = append(e.forget, v.then(func(value any, err error) {
+			e.post(func() {
+				e.pending--
+				e.settle(resolve, reject, value, err)
+			})
+		}))
+		object := e.vm.ToValue(promise).(*goja.Object)
+		e.origins[object] = v
+		return object
 	case Getter:
 		got, err := v(e.callContext())
 		if err != nil {
@@ -136,19 +202,60 @@ func (e *engine) toJS(value any) goja.Value {
 
 func (e *engine) function(f Func) func(goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
-		args := make([]any, 0, len(call.Arguments))
-		for i, arg := range call.Arguments {
-			value, err := e.fromJS(arg, 0)
-			if err != nil {
-				panic(e.vm.NewTypeError(fmt.Sprintf("argument %d %v", i+1, err)))
-			}
-			args = append(args, value)
-		}
-		returned, err := f(e.callContext(), args...)
+		returned, err := f(e.callContext(), e.argumentsOf(call)...)
 		if err != nil {
 			panic(e.raise(err))
 		}
 		return e.toJS(returned)
+	}
+}
+
+// async runs f in a goroutine of its own and settles the promise it gives the script on the loop.
+func (e *engine) async(f Async) func(goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		ctx, args := e.callContext(), e.argumentsOf(call)
+		promise, resolve, reject := e.vm.NewPromise()
+		e.pending++
+		e.work.Go(func() {
+			value, err := f(ctx, args...)
+			e.post(func() {
+				e.pending--
+				e.settle(resolve, reject, value, err)
+			})
+		})
+		return e.vm.ToValue(promise)
+	}
+}
+
+func (e *engine) argumentsOf(call goja.FunctionCall) []any {
+	args := make([]any, 0, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		value, err := e.fromJS(arg, 0)
+		if err != nil {
+			panic(e.vm.NewTypeError(fmt.Sprintf("argument %d %v", i+1, err)))
+		}
+		args = append(args, value)
+	}
+	return args
+}
+
+// settle gives what Go answered to a promise of the script, on the loop: an error rejects it as a Func throws, and a
+// value the bridge does not carry rejects it with the TypeError a Func would throw.
+func (e *engine) settle(resolve, reject func(any) error, value any, err error) {
+	var reason any
+	if err != nil {
+		reason = e.raise(err)
+	} else if exception := e.vm.Try(func() { value = e.toJS(value) }); exception != nil {
+		reason = exception.Value()
+	}
+	if reason != nil {
+		err = reject(reason)
+	} else {
+		err = resolve(value)
+	}
+	// What the promise jobs cannot catch: the interrupted script or an overflowed stack.
+	if err != nil {
+		panic(err)
 	}
 }
 
