@@ -86,17 +86,50 @@ The same program with an in-memory source runs as the package [example](example_
   other key makes the declaration unreadable.
 - **Call.** `exports.command` gets the arguments in declared order and the flags object last. A call the declaration
   does not take fails with `*UsageError` before the script runs.
-- **Runtime.** CommonJS in strict mode, synchronous, a fresh runtime per run; cancelling the context stops the script.
-  There is no sandbox: a script is trusted like the repository it lives in.
+- **Runtime.** CommonJS in strict mode with `async`/`await` and promises, a fresh runtime per run; cancelling the
+  context stops the script. There is no sandbox: a script is trusted like the repository it lives in.
 
 ## Bridge between Go and JavaScript
 
 The app gives scripts values through `Env.Modules`: `nil`, `bool`, `string`, `int64`, `float64`, `*big.Int`,
-`[]byte`, `[]any`, `*Object`, its own `Map` and `List`, `Func` and `Getter`. Values from Go are read-only in
-JavaScript. A script returns the same kinds of values back to Go.
+`[]byte`, `[]any`, `*Object`, its own `Map` and `List`, `Func`, `Async`, `*Promise` and `Getter`. Values from Go are
+read-only in JavaScript. A script returns the same kinds of values back to Go.
 
 `Env.Node` opts into a synchronous subset of Node.js: `fs` (`readFileSync`, `writeFileSync`, `mkdirSync`,
 `existsSync`, `readdirSync`, `statSync`), `Buffer`, and `fetch` for `GET` requests.
+
+## Async functions and commands
+
+An `Async` is a `Func` that runs in a goroutine of its own: the script gets a promise, and the value or the error
+crosses the bridge as for a `Func`. A command may be `async`: `Run` runs the loop until its promise settles and
+returns the value; a rejected promise is an error of the command, as an uncaught exception is. Run them in parallel
+with plain JavaScript:
+
+```js
+const app = require("app");
+
+exports.definition = { short: "Fetch both", long: "Fetch both pages at once." };
+
+exports.command = async () => {
+  const [a, b] = await Promise.all([app.page("a"), app.page("b")]);
+  return a + b;
+};
+```
+
+```go
+"page": cliche.Async(func(ctx context.Context, args ...any) (any, error) {
+	return load(ctx, args[0].(string)) // minutes of work; the script awaits it
+}),
+```
+
+- **Events of running work.** A `*Promise` is a promise the app settles from any goroutine with
+  `Settle(value, err)`; the first settlement counts. A `Func` hands one to the script, the script passes it to an
+  `Async`, and the work settles it while it runs, so the script can `await` an event before the result.
+- **Cancellation.** The `ctx` of an `Async` is the context of `Run`: cancelling it stops the script and the loop with
+  `*InterruptedError`. `Run` cancels work the command did not wait for and returns only after every `Async` goroutine
+  has ended, so an `Async` returns once `ctx` is done.
+- **A hung script.** A command promise left pending with no `Async` call running is a `*ScriptError`: nothing could
+  settle it. A `*Promise` is settled by running `Async` work, or before the script awaits it.
 
 ## Errors
 
@@ -109,7 +142,8 @@ codes are up to the app.
 
 - API reference: [pkg.go.dev](https://pkg.go.dev/github.com/hakastein/cliche).
 - Full rules of declarations, sources, the bridge and errors:
-  [ADR-0001](docs/adr/0001-the-framework-is-mechanisms.md) (in Russian).
+  [ADR-0001](docs/adr/0001-the-framework-is-mechanisms.md); promises, the loop and cancellation:
+  [ADR-0002](docs/adr/0002-promises-and-the-loop.md) (in Russian).
 - Glossary: [CONTEXT.md](CONTEXT.md) (in Russian).
 - Changes: [CHANGELOG.md](CHANGELOG.md).
 
