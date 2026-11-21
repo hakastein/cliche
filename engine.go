@@ -60,8 +60,11 @@ type engine struct {
 	buffer           *buffer.Buffer
 	bufferModule     *goja.Object
 	fsModule         *goja.Object
-	// running counts the calls of Async the loop has not settled; it is read and written on the loop only.
-	running int
+	// pending counts what the loop waits for: the calls of Async and the subscriptions to a *Promise it has not settled;
+	// it is read and written on the loop only.
+	pending int
+	// forget drops the subscriptions to a *Promise when the run ends: a pending one would hold the runtime.
+	forget []func()
 	// work is the goroutines of the calls of Async: Run returns after they end.
 	work sync.WaitGroup
 	// queue is what goroutines settled, for the loop to run in order; wake tells the loop that there is some.
@@ -90,6 +93,11 @@ func Run(ctx context.Context, c *Command, in Input, env Env) (any, error) {
 	// Work of Async the command did not wait for is cancelled when it returns, and the run ends with that work.
 	defer e.work.Wait()
 	defer cancel()
+	defer func() {
+		for _, forget := range e.forget {
+			forget()
+		}
+	}()
 	e.parseJSON, _ = goja.AssertFunction(vm.Get("JSON").ToObject(vm).Get("parse"))
 	e.freeze, _ = goja.AssertFunction(vm.Get("Object").ToObject(vm).Get("freeze"))
 	e.enableNode()
@@ -176,8 +184,8 @@ func (e *engine) answer(c *Command, in Input) any {
 var promiseType = reflect.TypeOf((*goja.Promise)(nil))
 
 // await runs the loop until promise settles: what goroutines settled, in order, each followed by the promise jobs of
-// goja. A promise that no work is left to settle never settles, which is a fault of the command script; a rejected one
-// is thrown as the command threw it.
+// goja. A promise that no call of Async and no *Promise is left to settle never settles, which is a fault of the command
+// script; a rejected one is thrown as the command threw it.
 func (e *engine) await(promise *goja.Promise) goja.Value {
 	for promise.State() == goja.PromiseStatePending {
 		e.mu.Lock()
@@ -190,9 +198,9 @@ func (e *engine) await(promise *goja.Promise) goja.Value {
 		if len(jobs) > 0 {
 			continue
 		}
-		if e.running == 0 {
+		if e.pending == 0 {
 			panic(e.raise(&ScriptError{Message: "the promise exports.command returned never settles: no call of an " +
-				"async function of the app is left to settle it", File: e.file}))
+				"async function and no promise of the app is left to settle it", File: e.file}))
 		}
 		select {
 		case <-e.wake:

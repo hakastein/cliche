@@ -66,14 +66,14 @@ type Func func(ctx context.Context, args ...any) (any, error)
 type Async func(ctx context.Context, args ...any) (any, error)
 
 // Promise is a promise the app settles from any goroutine: a value of the bridge a script awaits. The zero value is
-// pending, and the first Settle counts, as in JavaScript. Run waits for work of an Async, not for a Promise: a Promise
-// is settled while the script still waits for an Async, or before the script awaits it.
+// pending, and the first Settle counts, as in JavaScript. While the command waits, Run waits for a pending Promise the
+// script holds as for an Async, until ctx is done.
 type Promise struct {
 	mu      sync.Mutex
 	settled bool
 	value   any
 	err     error
-	waiting []func(value any, err error)
+	waiting []*func(value any, err error)
 }
 
 // Settle fulfils p with value, or rejects it with err when err is not nil.
@@ -88,20 +88,25 @@ func (p *Promise) Settle(value any, err error) {
 	p.waiting = nil
 	p.mu.Unlock()
 	for _, settle := range waiting {
-		settle(value, err)
+		(*settle)(value, err)
 	}
 }
 
-// then calls settle once p is settled: at once when it is.
-func (p *Promise) then(settle func(value any, err error)) {
+// then calls settle once p is settled: at once when it is. forget drops settle if p is not settled yet.
+func (p *Promise) then(settle func(value any, err error)) (forget func()) {
 	p.mu.Lock()
 	if !p.settled {
-		p.waiting = append(p.waiting, settle)
+		p.waiting = append(p.waiting, &settle)
 		p.mu.Unlock()
-		return
+		return func() {
+			p.mu.Lock()
+			p.waiting = slices.DeleteFunc(p.waiting, func(waiting *func(any, error)) bool { return waiting == &settle })
+			p.mu.Unlock()
+		}
 	}
 	p.mu.Unlock()
 	settle(p.value, p.err)
+	return func() {}
 }
 
 // Getter is a property computed each time a script reads it.
@@ -175,7 +180,13 @@ func (e *engine) toJS(value any) goja.Value {
 		return object
 	case *Promise:
 		promise, resolve, reject := e.vm.NewPromise()
-		v.then(func(value any, err error) { e.post(func() { e.settle(resolve, reject, value, err) }) })
+		e.pending++
+		e.forget = append(e.forget, v.then(func(value any, err error) {
+			e.post(func() {
+				e.pending--
+				e.settle(resolve, reject, value, err)
+			})
+		}))
 		object := e.vm.ToValue(promise).(*goja.Object)
 		e.origins[object] = v
 		return object
@@ -204,11 +215,11 @@ func (e *engine) async(f Async) func(goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
 		ctx, args := e.callContext(), e.argumentsOf(call)
 		promise, resolve, reject := e.vm.NewPromise()
-		e.running++
+		e.pending++
 		e.work.Go(func() {
 			value, err := f(ctx, args...)
 			e.post(func() {
-				e.running--
+				e.pending--
 				e.settle(resolve, reject, value, err)
 			})
 		})

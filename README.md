@@ -123,13 +123,30 @@ exports.command = async () => {
 ```
 
 - **Events of running work.** A `*Promise` is a promise the app settles from any goroutine with
-  `Settle(value, err)`; the first settlement counts. A `Func` hands one to the script, the script passes it to an
-  `Async`, and the work settles it while it runs, so the script can `await` an event before the result.
+  `Settle(value, err)`; the first settlement counts. A `Func` starts work in a goroutine of the app and returns
+  promises of its events and of its result, so the script can `await` an event before the result:
+
+  ```go
+  "run": cliche.Func(func(ctx context.Context, args ...any) (any, error) {
+  	started, result := new(cliche.Promise), new(cliche.Promise)
+  	go func() {
+  		result.Settle(work(ctx, func() { started.Settle(cliche.Undefined{}, nil) }))
+  	}()
+  	return cliche.NewObject([]string{"started", "result"}, []any{started, result}), nil
+  }),
+  ```
+
+  ```js
+  const run = app.run();
+  await run.started;
+  return await run.result;
+  ```
 - **Cancellation.** The `ctx` of an `Async` is the context of `Run`: cancelling it stops the script and the loop with
   `*InterruptedError`. `Run` cancels work the command did not wait for and returns only after every `Async` goroutine
   has ended, so an `Async` returns once `ctx` is done.
-- **A hung script.** A command promise left pending with no `Async` call running is a `*ScriptError`: nothing could
-  settle it. A `*Promise` is settled by running `Async` work, or before the script awaits it.
+- **A hung script.** While the command promise is pending, `Run` waits for running `Async` calls and pending
+  `*Promise` values the script holds, until `ctx` is done. A command promise with neither left to settle it is a
+  `*ScriptError`. When `Run` returns, a pending `*Promise` no longer refers to the run.
 
 ## Errors
 

@@ -12,7 +12,8 @@ import (
 	"github.com/hakastein/cliche"
 )
 
-// asyncAPI is a module of async functions of the app; work settles the promise it is given and waits for ack.
+// asyncAPI is a module of async functions of the app; start runs work in a goroutine of the app, which settles started
+// at once and result after ack.
 func asyncAPI() *cliche.Object {
 	acked := make(chan struct{})
 	return object(
@@ -21,21 +22,24 @@ func asyncAPI() *cliche.Object {
 			return nil, &appError{code: "E_APP", err: errSentinel}
 		}),
 		"odd", cliche.Async(func(context.Context, ...any) (any, error) { return struct{}{}, nil }),
-		"signal", cliche.Func(func(context.Context, ...any) (any, error) { return new(cliche.Promise), nil }),
 		"settled", cliche.Func(func(context.Context, ...any) (any, error) {
 			settled := new(cliche.Promise)
 			settled.Settle("first", nil)
 			settled.Settle("second", nil)
 			return settled, nil
 		}),
-		"work", cliche.Async(func(ctx context.Context, args ...any) (any, error) {
-			args[0].(*cliche.Promise).Settle("started", nil)
-			select {
-			case <-acked:
-				return "done", nil
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+		"start", cliche.Func(func(ctx context.Context, _ ...any) (any, error) {
+			started, result := new(cliche.Promise), new(cliche.Promise)
+			go func() {
+				started.Settle("started", nil)
+				select {
+				case <-acked:
+					result.Settle("done", nil)
+				case <-ctx.Done():
+					result.Settle(nil, ctx.Err())
+				}
+			}()
+			return object("started", started, "result", result), nil
 		}),
 		"ack", cliche.Func(func(context.Context, ...any) (any, error) { close(acked); return cliche.Undefined{}, nil }),
 	)
@@ -55,9 +59,9 @@ func TestAsyncCommandAnswersWhatItsPromiseFulfils(t *testing.T) {
 		{name: "a value of an async function the bridge does not carry, caught",
 			body: `try { await api.odd(); } catch (e) { return e instanceof TypeError; }`, want: true},
 		{name: "a promise of the app settled twice", body: `return await api.settled();`, want: "first"},
-		{name: "a promise of the app its async function settles while it runs",
-			body: `const started = api.signal(); const answer = api.work(started); await started; api.ack(); ` +
-				`return [await started, await answer];`,
+		{name: "promises of the app a goroutine of the app settles",
+			body: `const run = api.start(); const started = await run.started; api.ack(); ` +
+				`return [started, await run.result];`,
 			want: []any{"started", "done"}},
 	}
 	for _, tc := range tests {
@@ -85,7 +89,8 @@ func TestUnsettledOrRejectedCommandPromiseIsAScriptError(t *testing.T) {
 		line int
 	}{
 		{name: "a throw after an await", body: `await api.twice(1);` + "\n" + `  throw new Error("no");`, line: 5},
-		{name: "a promise of the app no work settles", body: `await api.signal();`},
+		{name: "a promise of the script nothing settles after a settled promise of the app",
+			body: `await api.settled(); await new Promise(() => {});`},
 		{name: "a promise of the script nothing settles", body: `await new Promise(() => {});`},
 	}
 	for _, tc := range tests {

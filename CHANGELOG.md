@@ -9,7 +9,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 - `Async`: a function of the API module that runs in a goroutine of its own and gives the script a promise of its
   value; two calls run in parallel. `*Promise`: a promise the app settles from any goroutine with `Settle`.
 - Cancelling the context stops the loop with `*InterruptedError`; `Run` cancels work the command did not wait for and
-  returns after every `Async` goroutine has ended. A command promise nothing is left to settle is a `*ScriptError`.
+  returns after every `Async` goroutine has ended. `Run` waits for a pending `*Promise` the script holds as for an
+  `Async` call; a command promise nothing is left to settle is a `*ScriptError`.
 
 ## v0.2.0 — 2026-10-16
 
